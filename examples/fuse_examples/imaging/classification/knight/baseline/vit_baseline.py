@@ -2,7 +2,6 @@ from collections import OrderedDict
 import pathlib
 from fuse.utils.utils_logger import fuse_logger_start
 import os
-from typing import Any, List, OrderedDict, Sequence, Tuple
 import yaml
 
 import pandas as pd
@@ -26,15 +25,7 @@ import time
 import copy
 from fuse.dl.losses.loss_default import LossDefault
 from fuse.dl.lightning.pl_module import LightningModuleDefault
-from fuse.dl.models.model_wrapper import ModelWrapSeqToDict
 import pytorch_lightning as pl
-
-import torch
-import numpy as np
-from typing import Sequence
-from fuse.dl.models.backbones.backbone_transformer import Transformer
-from fuse_examples.imaging.classification.mnist import lenet
-from fuse.dl.models.backbones.backbone_vit import ViT
 
 ## Parameters:
 ##############################################################################
@@ -43,87 +34,6 @@ from fuse.dl.models.backbones.backbone_vit import ViT
 # allocate gpus
 # uncomment if you want to use specific gpus instead of automatically looking for free ones
 
-class ProjectPatchesTokenizer(nn.Module):
-    """
-    Projects a 1D/2D/3D images to tokens using patches
-    Assumes to have one of the forms:
-    (1) batch_size, channels, height
-    (2) batch_size, channels, height, width
-    (3) batch_size, channels, height, width, depth
-
-    The output shape is always:
-    batch_size, num_tokens, token_dim
-    """
-
-    def __init__(self, *, image_shape: Sequence[int], patch_shape: Sequence[int], channels: int, token_dim: int):
-        super().__init__()
-        assert len(image_shape) == len(patch_shape), "patch and image must have identical dimensions"
-        image_shape = np.array(image_shape)
-        patch_shape = np.array(patch_shape)
-        assert (image_shape % patch_shape == 0).all(), "Image dimensions must be divisible by the patch size."
-        self.num_tokens = int(np.prod(image_shape // patch_shape))
-        patch_shape = tuple(patch_shape)
-        self.image_dim = len(image_shape)
-        if self.image_dim == 1:
-            self.proj_layer = nn.Conv1d(
-                in_channels=channels, out_channels=token_dim, kernel_size=patch_shape, stride=patch_shape
-            )
-        elif self.image_dim == 2:
-            self.proj_layer = nn.Conv2d(
-                in_channels=channels, out_channels=token_dim, kernel_size=patch_shape, stride=patch_shape
-            )
-        elif self.image_dim == 3:
-            self.proj_layer = nn.Conv3d(
-                in_channels=channels, out_channels=token_dim, kernel_size=patch_shape, stride=patch_shape
-            )
-        else:
-            raise NotImplementedError("only supports 1D/2D/3D images")
-
-    def forward(self, x):
-        assert len(x.shape) == self.image_dim + 2, "input should be [batch, channels] + image_shape"
-        x = self.proj_layer(x)
-        x = x.flatten(start_dim=2, end_dim=-1)  # x.shape == (batch_size, token_dim, num_tokens)
-        x = x.transpose(1, 2)  # x.shape == (batch_size, num_tokens, token_dim)
-        return x
-
-class MyMmvit(nn.Module):
-    """
-    Projects a 1D/2D/3D image into tokens, and then runs it through a transformer
-    Then puts a linear (fc) head onto backbone from fuse.dl.models.backbones.backbone_vit.ViT
-    """
-
-    def __init__(self, token_dim: int, projection_kwargs: dict, transformer_kwargs: dict):
-        """
-        :param token_dim: the dimension of each token in the transformer
-        :param projection_kwargs: positional arguments for the ProjectPatchesTokenizer class
-        :param transformer_kwargs: positional arguments for the Transformer class
-        """
-        super().__init__()
-        self.projection_layer = ProjectPatchesTokenizer(token_dim=token_dim, **projection_kwargs)
-        num_tokens = self.projection_layer.num_tokens
-        self.transformer = Transformer(num_tokens=num_tokens, token_dim=token_dim, **transformer_kwargs)
-        self._head = nn.Linear(token_dim, 10)
-
-    def forward(self, x: torch.Tensor, mod2: torch.Tensor, pool: str = "none"):
-        """
-        :param pool: returns all tokens (pool='none'), only cls token (pool='cls') or the average token (pool='mean')
-        """
-        assert pool in ["none", "cls", "mean"]
-        x = self.projection_layer(x)
-        mod2 = mod2.unsqueeze(1)
-        import pdb; pdb.set_trace()
-        # x = torch.cat((x, , 1)
-        x = self.transformer(x)
-        if pool == "cls":
-            x = x[:, 0]
-        if pool == "mean":
-            x = x.mean(dim=1)
-        x = self._head(x[:, 0])
-        return x
-
-def perform_softmax(logits: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-    cls_preds = F.softmax(logits, dim=1)
-    return logits, cls_preds
 
 def make_model(use_data: dict, num_classes: int, imaging_dropout: float, fused_dropout: float):
     if use_data["imaging"]:
@@ -136,38 +46,23 @@ def make_model(use_data: dict, num_classes: int, imaging_dropout: float, fused_d
         append_features = [("data.input.clinical.all", 11)]
     else:
         append_features = None
-    
-    # model
-    token_dim = 64
-    # input is a 3d image with shape [128,128,128] and 1 channel
-    # projected using 3d patches of size [16,16,16]
-    projection_kwargs = dict(image_shape=[70, 256, 256], patch_shape=[7, 16, 16], channels=1)
-    # the transformer specification
-    transformer_kwargs = dict(depth=4, heads=5, mlp_dim=256, dim_head=64, dropout=0.0, emb_dropout=0.0)
-    torch_model = MyMmvit(token_dim=token_dim, projection_kwargs=projection_kwargs, transformer_kwargs=transformer_kwargs)
 
-    model = ModelWrapSeqToDict(
-        model=torch_model,
-        model_inputs=["data.input.img", "data.input.clinical.all"],
-        post_forward_processing_function=perform_softmax,
-        model_outputs=["model.logits.head_0", "model.output.head_0"],
+    model = ModelMultiHead(
+        conv_inputs=(("data.input.img", 1),),
+        backbone=backbone,
+        heads=[
+            Head3D(
+                head_name="head_0",
+                mode="classification",
+                conv_inputs=conv_inputs,
+                dropout_rate=imaging_dropout,
+                num_outputs=num_classes,
+                append_features=append_features,
+                append_layers_description=(256, 128),
+                fused_dropout_rate=fused_dropout,
+            ),
+        ],
     )
-    # model = ModelMultiHead(
-    #     conv_inputs=(("data.input.img", 1),),
-    #     backbone=backbone,
-    #     heads=[
-    #         Head3D(
-    #             head_name="head_0",
-    #             mode="classification",
-    #             conv_inputs=conv_inputs,
-    #             dropout_rate=imaging_dropout,
-    #             num_outputs=num_classes,
-    #             append_features=append_features,
-    #             append_layers_description=(256, 128),
-    #             fused_dropout_rate=fused_dropout,
-    #         ),
-    #     ],
-    # )
     return model
 
 
@@ -268,8 +163,7 @@ def main(cfg_path):
     )
 
     train_iter = next(iter(train_dl))
-    clinical_train_feat = train_iter["data"]["input"]["clinical"]
-    clinical_val_feat = train_iter["data"]["input"]["clinical"]
+    # clinical_feat = train_iter.data.input.clinical.all
     import pdb; pdb.set_trace()
 
     # Loss definition:

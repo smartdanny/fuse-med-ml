@@ -111,8 +111,10 @@ class MyMmvit(nn.Module):
         assert pool in ["none", "cls", "mean"]
         x = self.projection_layer(x)
         mod2 = mod2.unsqueeze(1)
-        import pdb; pdb.set_trace()
-        # x = torch.cat((x, , 1)
+        mod2_zeros = torch.zeros((x.shape[0], 1, 64))
+        mod2_zeros[:, :, :11] = mod2
+        mod2 = mod2_zeros.cuda()
+        x = torch.cat((x, mod2), 1)
         x = self.transformer(x)
         if pool == "cls":
             x = x[:, 0]
@@ -267,10 +269,10 @@ def main(cfg_path):
         generator=rand_gen,
     )
 
-    train_iter = next(iter(train_dl))
-    clinical_train_feat = train_iter["data"]["input"]["clinical"]
-    clinical_val_feat = train_iter["data"]["input"]["clinical"]
-    import pdb; pdb.set_trace()
+    # train_iter = next(iter(train_dl))
+    # clinical_train_feat = train_iter["data"]["input"]["clinical"]
+    # clinical_val_feat = train_iter["data"]["input"]["clinical"]
+    # import pdb; pdb.set_trace()
 
     # Loss definition:
     ##############################################################################
