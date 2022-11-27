@@ -53,6 +53,9 @@ from fuseimg.datasets.mnist import MNIST
 
 from fuse_examples.imaging.classification.mnist import lenet
 
+from clearml import Task
+task = Task.init(project_name="SHATZ-root-project/SHATZ_sub-project", task_name="SHATZ_train02")
+
 ###########################################################################################################
 # Fuse
 ###########################################################################################################
@@ -220,7 +223,7 @@ TRAIN_COMMON_PARAMS["data.validation_num_workers"] = 8
 # ===============
 # PL Trainer
 # ===============
-TRAIN_COMMON_PARAMS["trainer.num_epochs"] = 2
+TRAIN_COMMON_PARAMS["trainer.num_epochs"] = 10
 TRAIN_COMMON_PARAMS["trainer.num_devices"] = NUM_GPUS
 TRAIN_COMMON_PARAMS["trainer.accelerator"] = "gpu"
 # use "dp" strategy temp when working with multiple GPUS - workaround for pytorch lightning issue: https://github.com/Lightning-AI/lightning/issues/11807

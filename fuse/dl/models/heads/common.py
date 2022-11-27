@@ -57,6 +57,7 @@ class ClassifierFCN(nn.Module):
         self.classifier = nn.Sequential(*layer_list)
 
     def forward(self, x):
+        # import pdb; pdb.set_trace()
         x = self.classifier(x)
         return x
 

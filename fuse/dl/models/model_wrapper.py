@@ -51,7 +51,7 @@ class ModelWrapSeqToDict(torch.nn.Module):
             for example: model_outputs=('output.output_0',)
         :param pre_forward_processing_function: utility function to process input data before forward is called (after it's extracted from batch_dict)
         :param post_forward_processing_function: utility function to process forward's output data before it is saved into batch_dict
-
+    
 
 
         """
@@ -63,6 +63,8 @@ class ModelWrapSeqToDict(torch.nn.Module):
         self.model_outputs = model_outputs
 
     def forward(self, batch_dict: NDict) -> Dict:
+        # SHATZ CHECK HERE FOR DIFF
+        # import pdb; pdb.set_trace()
         # convert input to the model's expected input
         model_input = [batch_dict[conv_input] for conv_input in self.model_inputs]
 
