@@ -411,3 +411,13 @@ class OpRotation3D(OpBase):
 
         sample_dict[key] = aug_input
         return sample_dict
+
+
+class OpTranspose(OpBase):
+    def __init__(self):
+        super().__init__()
+    def __call__(self, sample_dict: NDict, dim0: int, dim1: int, key: str, **kwargs) -> NDict:
+        aug_input = sample_dict[key]
+        aug_output = torch.transpose(aug_input, dim0, dim1)
+        sample_dict[key] = aug_output
+        return sample_dict

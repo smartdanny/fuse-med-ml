@@ -22,7 +22,7 @@ from fuse.utils import NDict
 
 from fuseimg.data.ops.image_loader import OpLoadImage
 from fuseimg.data.ops.aug.color import OpAugColor, OpAugGaussian
-from fuseimg.data.ops.aug.geometry import OpResizeTo, OpAugAffine2D
+from fuseimg.data.ops.aug.geometry import OpResizeTo, OpAugAffine2D, OpTranspose
 from fuse.utils.rand.param_sampler import Uniform, RandInt, RandBool
 from fuse.data.utils.samplers import BatchSamplerDefault
 from torch.utils.data import DataLoader
@@ -226,6 +226,7 @@ class ISIC:
             ),
             # Convert to tensor for the augmentation process
             (OpToTensor(), dict(key="data.input.img", dtype=torch.float)),
+            (OpTranspose(), dict(key="data.input.img", dim0=0, dim1=-1)),
         ]
 
         if train:

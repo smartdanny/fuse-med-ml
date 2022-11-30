@@ -55,6 +55,7 @@ from fuse_examples.imaging.classification.isic.golden_members import FULL_GOLDEN
 import torch.nn as nn
 from fuse.dl.models.model_wrapper import ModelWrapSeqToDict
 from fuse.dl.models.backbones.backbone_vit import ViT
+from perceiver_pytorch import Perceiver
 
 ###########################################################################################################
 # Fuse
@@ -69,7 +70,7 @@ debug = FuseDebug(mode)
 # GPUs and Workers
 ##########################################
 NUM_GPUS = 1  # supports multiple gpu training with DDP strategy
-NUM_WORKERS = 16
+NUM_WORKERS = 32
 
 ##########################################
 # Modality
@@ -79,7 +80,7 @@ multimodality = False # Set: 'False' to use only imaging, 'True' to use imaging 
 ##########################################
 # Model Type
 ##########################################
-model_type = "CNN"  # Set: 'Transformer' to use ViT/MMViT, 'CNN' to use InceptionResNet
+model_type = "perceiver"  # Set: 'Transformer' to use ViT/MMViT, 'CNN' to use InceptionResNet
 
 ##########################################
 # Output Paths
@@ -107,7 +108,7 @@ TRAIN_COMMON_PARAMS = {}
 # ============
 # Data
 # ============
-TRAIN_COMMON_PARAMS["data.batch_size"] = 64  # effective batch size = batch_size * num_gpus
+TRAIN_COMMON_PARAMS["data.batch_size"] = 32  # effective batch size = batch_size * num_gpus
 TRAIN_COMMON_PARAMS["data.num_workers"] = NUM_WORKERS
 TRAIN_COMMON_PARAMS["data.num_folds"] = 5
 TRAIN_COMMON_PARAMS["data.train_folds"] = [0, 1, 2]
@@ -147,6 +148,11 @@ elif model_type == "Transformer":
         projection_kwargs=dict(image_shape=[300, 300], patch_shape=[30, 30], channels=3),
         transformer_kwargs=dict(depth=12, heads=12, mlp_dim=token_dim * 4, dim_head=64, dropout=0.0, emb_dropout=0.0),
     )
+elif model_type == "perceiver":
+    TRAIN_COMMON_PARAMS["model"] = dict(
+        nothing = 5
+    )
+    # raise NotImplementedError
 elif model_type == "vit_head":
     token_dim = 768
     TRAIN_COMMON_PARAMS["model"] = dict(
@@ -215,6 +221,37 @@ def create_transformer_model(
         model_outputs=["model.logits.head_0", "model.output.head_0"],
     )
     return model
+    
+def create_perceiver_model():
+    model = Perceiver(
+        input_channels = 3,          # number of channels for each token of the input
+        input_axis = 2,              # number of axis for input data (2 for images, 3 for video)
+        num_freq_bands = 6,          # number of freq bands, with original value (2 * K + 1)
+        max_freq = 10.,              # maximum frequency, hyperparameter depending on how fine the data is
+        depth = 6,                   # depth of net. The shape of the final attention mechanism will be:
+                                    #   depth * (cross attention -> self_per_cross_attn * self attention)
+        num_latents = 256,           # number of latents, or induced set points, or centroids. different papers giving it different names
+        latent_dim = 512,            # latent dimension
+        cross_heads = 1,             # number of heads for cross attention. paper said 1
+        latent_heads = 8,            # number of heads for latent self attention, 8
+        cross_dim_head = 64,         # number of dimensions per cross attention head
+        latent_dim_head = 64,        # number of dimensions per latent self attention head
+        num_classes = 8,          # output number of classes
+        attn_dropout = 0.,
+        ff_dropout = 0.,
+        weight_tie_layers = False,   # whether to weight tie layers (optional, as indicated in the diagram)
+        fourier_encode_data = True,  # whether to auto-fourier encode the data, using the input_axis given. defaults to True, but can be turned off if you are fourier encoding the data yourself
+        self_per_cross_attn = 2      # number of self attention blocks per cross attention
+    )
+    model = ModelWrapSeqToDict(
+        model=model,
+        model_inputs=["data.input.img", "data.input.clinical.all"] if multimodality else ["data.input.img"],
+        post_forward_processing_function=perform_softmax,
+        # model_outputs=["model.logits.head_0"],
+        model_outputs=["model.logits.head_0", "model.output.head_0"],
+    )
+    return model
+
 
 
 def create_cnn_model(
@@ -301,6 +338,7 @@ def create_datamodule(paths: dict, train_common_params: dict) -> pl.LightningDat
         reset_cache=False,
         reset_split=False,
         use_batch_sampler=True if NUM_GPUS <= 1 else False,
+        
     )
 
     return datamodule
@@ -314,7 +352,7 @@ def run_train(paths: dict, train_common_params: dict) -> None:
     # Logger
     # ==============================================================================
     mod_string = "multimodal" if multimodality else "imaging"
-    start_clearml_logger(project_name="SHATZ_isic_II", task_name=f"{model_type}_{mod_string}_dropout0.1")
+    start_clearml_logger(project_name="SHATZ_isic_II", task_name=f"big_{model_type}_{mod_string}_channelsFalse")
     fuse_logger_start(output_path=paths["model_dir"], console_verbose_level=logging.INFO)
     lgr = logging.getLogger("Fuse")
     lgr.info("Fuse Train", {"attrs": ["bold", "underline"]})
@@ -339,6 +377,8 @@ def run_train(paths: dict, train_common_params: dict) -> None:
 
     if model_type == "Transformer":
         model = create_transformer_model(**train_common_params["model"])
+    elif model_type == "perceiver":
+        model = create_perceiver_model()
     elif model_type == "CNN":
         model = create_cnn_model(**train_common_params["model"])
     elif model_type == "vit_head":
@@ -408,6 +448,7 @@ def run_train(paths: dict, train_common_params: dict) -> None:
         accelerator=train_common_params["trainer.accelerator"],
         devices=train_common_params["trainer.num_devices"],
         strategy=train_common_params["trainer.strategy"],
+        num_sanity_val_steps=0
     )
 
     # train
