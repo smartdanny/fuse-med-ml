@@ -70,7 +70,7 @@ debug = FuseDebug(mode)
 # GPUs and Workers
 ##########################################
 NUM_GPUS = 1  # supports multiple gpu training with DDP strategy
-NUM_WORKERS = 32
+NUM_WORKERS = 48
 
 ##########################################
 # Modality
@@ -352,7 +352,7 @@ def run_train(paths: dict, train_common_params: dict) -> None:
     # Logger
     # ==============================================================================
     mod_string = "multimodal" if multimodality else "imaging"
-    start_clearml_logger(project_name="SHATZ_isic_II", task_name=f"big_{model_type}_{mod_string}_channelsFalse")
+    start_clearml_logger(project_name="SHATZ_isic_II", task_name=f"big_{model_type}_{mod_string}_24hr")
     fuse_logger_start(output_path=paths["model_dir"], console_verbose_level=logging.INFO)
     lgr = logging.getLogger("Fuse")
     lgr.info("Fuse Train", {"attrs": ["bold", "underline"]})
